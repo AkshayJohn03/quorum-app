@@ -15,6 +15,12 @@ export interface SegmentFingerprint {
   receipts: Receipt[];
   /** cross-domain chains: loving A predicts B (entity → entity, with score) */
   chains: { from: string; to: string; affinity: number }[];
+  /** street-lift measurement: does adding the street amplify the concept's audience? */
+  stats?: {
+    intersectionMean: number; // mean affinity, concept signals + street
+    conceptOnlyMean: number;  // mean affinity, concept signals alone
+    lift: number;             // intersectionMean - conceptOnlyMean
+  };
 }
 
 /** One testable claim decomposed from the user's idea. */

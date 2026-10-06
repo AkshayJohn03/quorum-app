@@ -1,17 +1,23 @@
 /** Minimal LLM client: OpenAI-compatible endpoint when configured, deterministic fallback otherwise. */
 
 export interface LLMClient {
+  /** Explicit capability flag — minification-proof (constructor names are mangled in prod bundles). */
+  readonly kind: 'live' | 'fallback';
   complete(prompt: string): Promise<string>;
 }
 
 export class EchoFallback implements LLMClient {
+  readonly kind = 'fallback' as const;
   async complete(prompt: string): Promise<string> {
-    // deterministic fallback so tests + offline demo never need a key
-    return prompt.includes('PANELIST:') ? '' : '[mock]';
+    // deterministic fallback so tests + offline demo never need a key.
+    // Callers MUST check `kind` before calling complete() — the fallback
+    // never invents panel dialogue.
+    return '';
   }
 }
 
 export class OpenAICompat implements LLMClient {
+  readonly kind = 'live' as const;
   constructor(
     private apiKey: string,
     private baseUrl = process.env.QUORUM_LLM_BASE_URL || 'https://api.openai.com/v1',

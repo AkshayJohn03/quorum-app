@@ -24,7 +24,7 @@ export async function POST(req: Request) {
 
   const qloo = buildQlooClient();
   const llm = buildLLM();
-  const hasLLM = llm.constructor.name !== 'EchoFallback';
+  const hasLLM = llm.kind === 'live';
 
   // grounded panel: reactions through real Qloo fingerprints
   const searchRes = await qloo.searchEntities(concept.split(/\s+/).slice(0, 3).join(' '));

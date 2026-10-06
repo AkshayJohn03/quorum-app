@@ -17,9 +17,9 @@ export interface PlannedSearch {
   filterType: string;
 }
 
-/** Explicit LLM capability flag — no constructor sniffing. */
+/** Explicit LLM capability flag — minification-proof (class names are mangled in prod bundles). */
 function hasLLM(llm: LLMClient): boolean {
-  return llm.constructor.name !== 'EchoFallback';
+  return llm.kind === 'live';
 }
 
 /** LLM plans which Qloo searches represent this concept. Heuristic fallback offline. */
@@ -177,9 +177,39 @@ export async function buildFingerprint(
   }
 
   const finalOutput = [...byName.values()].sort((a, b) => b.affinity - a.affinity).slice(0, 16);
+
+  // STREET LIFT — the honest fit metric. Qloo's top returned affinities are
+  // ceiling-capped (~0.9 for any intersection), so absolute strength can't
+  // discriminate. What can: does ADDING the street amplify the concept's own
+  // audience? Same 10 domains, concept signals only, no street — then compare.
+  const conceptOnlyResults = await Promise.allSettled(
+    QLOO_DOMAINS.map((domain) =>
+      qloo.affinities(conceptSignalIds, `urn:entity:${domain}`, 4)
+        .then((affs) => ({ domain, affs })),
+    ),
+  );
+  const conceptOnlyAffs: number[] = [];
+  for (const result of conceptOnlyResults) {
+    if (result.status !== 'fulfilled') continue;
+    result.value.affs.slice(0, 3).forEach((a) => conceptOnlyAffs.push(a.affinity));
+  }
+  const mean = (xs: number[]) => (xs.length ? xs.reduce((s, x) => s + x, 0) / xs.length : 0);
+  const intersectionMean = mean(finalOutput.map((r) => r.affinity));
+  const conceptOnlyMean = conceptOnlyAffs.length ? mean(conceptOnlyAffs) : intersectionMean;
+
   // never throw — return whatever receipts exist, even 1; the UI handles the
   // thin case gracefully and the report is still useful with partial data
-  return { segmentLabel, geo: neighborhood, receipts: finalOutput, chains: [] };
+  return {
+    segmentLabel,
+    geo: neighborhood,
+    receipts: finalOutput,
+    chains: [],
+    stats: {
+      intersectionMean,
+      conceptOnlyMean,
+      lift: intersectionMean - conceptOnlyMean,
+    },
+  };
 }
 
 /** LLM-driven claim decomposition when available, heuristic fallback offline. */
@@ -227,10 +257,26 @@ async function adaptiveProbe(qloo: QlooClient, statement: string): Promise<{ nam
   return undefined;
 }
 
+/** Offline panel voice — deterministic, receipt-cited dialogue (no LLM needed, no mock strings). */
+function offlineStatement(
+  stance: PanelStatement['stance'],
+  cited: Receipt,
+  geo: string,
+): string {
+  if (stance === 'enthusiast') {
+    return `You had me at ${cited.entity} — that is exactly the energy I'm on ${geo} for. I'd be a regular, and I know people who'd come with me.`;
+  }
+  if (stance === 'skeptical') {
+    return `I like ${cited.entity} as much as anyone here, but liking it and building a week around it are different things. Convince me this is worth changing my routine for.`;
+  }
+  return `Honestly? This isn't for me. My taste on ${geo} runs through ${cited.entity}, and this concept doesn't speak to that — I'd walk past without noticing it.`;
+}
+
 /**
- * Grounded panel — stances are DERIVED from receipt affinities, not hard-coded.
- * High-affinity receipts → enthusiast; low → rejector; middle → skeptical.
- * This makes GO reachable when the concept genuinely fits the street.
+ * Grounded panel — the stance MIX is the panel design (disclosed in the product:
+ * enthusiasts, one skeptic, and a rejector whenever the data has spread), while
+ * every panelist speaks strictly through their own measured receipt. This keeps
+ * GO reachable when the street genuinely fits, and keeps every sentence citable.
  */
 export async function runPanel(
   fingerprint: SegmentFingerprint,
@@ -238,41 +284,51 @@ export async function runPanel(
   llm: LLMClient,
   qloo: QlooClient,
 ): Promise<PanelStatement[]> {
-  const stances: PanelStatement['stance'][] = ['enthusiast', 'skeptical', 'rejector', 'enthusiast'];
+  const receipts = fingerprint.receipts;
+  if (!receipts.length) return [];
+  const seats = Math.min(4, Math.max(claims.length, 3));
+  const top = receipts[0].affinity;
+  const bottom = receipts[receipts.length - 1].affinity;
+  // a designed rejector only when the data warrants one: meaningful spread or a
+  // weak floor — otherwise the panel is unanimous heat and forcing a no would be dishonest
+  const rejectorWarranted = top - bottom >= 0.15 || bottom < 0.6;
+  const NAMES = ['Maya', 'Dev', 'Sofia', 'Ravi'];
   const statements: PanelStatement[] = [];
 
-  for (let i = 0; i < claims.length; i++) {
-    const claim = claims[i];
-    const receipt = fingerprint.receipts[i % fingerprint.receipts.length];
-    // stance is DATA-DRIVEN: high-affinity receipts get enthusiasts,
-    // low-affinity gets skeptics/rejectors — the panel reacts to the data
-    const stance = receipt.affinity >= 0.65 ? 'enthusiast' : receipt.affinity >= 0.45 ? 'skeptical' : 'rejector';
-    const panelist = `${['Maya', 'Dev', 'Sofia', 'Ravi'][i % 4]}, ${24 + i * 3} — into ${receipt.entity}`;
+  for (let i = 0; i < seats; i++) {
+    const receipt = receipts[i % receipts.length];
+    let stance: PanelStatement['stance'];
+    if (i === 1) stance = 'skeptical'; // the designed skeptic — seat 2 always
+    else if (i === 3 && rejectorWarranted) stance = 'rejector'; // the designed no — seat 4
+    else stance = receipt.affinity >= 0.65 ? 'enthusiast' : 'skeptical';
+
+    // the rejector speaks through the weakest receipt — their honest taste
+    const cited = stance === 'rejector' ? receipts[receipts.length - 1] : receipt;
+    const panelist = `${NAMES[i % 4]}, ${24 + i * 3} — into ${cited.entity}`;
 
     let text: string;
-    let groundedIn: Receipt[] = [receipt];
+    let groundedIn: Receipt[] = [cited];
 
     if (hasLLM(llm)) {
       const prompt = [
         `You are ${panelist}, part of a focus group in ${fingerprint.geo}.`,
-        `Your measured taste fingerprint (real affinity data): ${fingerprint.receipts.map((r) => `${r.entity} (${r.domain}, ${r.affinity.toFixed(2)})`).join('; ')}.`,
-        `A claim under test: "${claim.text}"`,
-        `React in 2 sentences from INSIDE your fingerprint. Reference at least one listed entity by name. Be ${stance === 'enthusiast' ? 'genuinely enthusiastic' : stance === 'skeptical' ? 'honestly skeptical' : stance === 'rejector' ? 'clearly rejecting — this is not for you' : 'neutral but specific'}. Do not invent entities.`,
+        `Your measured taste fingerprint (real affinity data): ${receipts.map((r) => `${r.entity} (${r.domain}, ${r.affinity.toFixed(2)})`).join('; ')}.`,
+        `A concept under test: "${claims[i % claims.length]?.text ?? claims[0]?.text ?? fingerprint.segmentLabel}"`,
+        `React in 2 sentences from INSIDE your fingerprint. Reference ${cited.entity} by name. Be ${stance === 'enthusiast' ? 'genuinely enthusiastic' : stance === 'skeptical' ? 'honestly skeptical — you like your tastes but doubt the concept changes your routine' : 'clearly rejecting — this is not for you, say what you would do instead'}. Do not invent entities.`,
       ].join('\n');
-      text = await llm.complete(prompt);
+      try {
+        text = (await llm.complete(prompt)).trim() || offlineStatement(stance, cited, fingerprint.geo);
+      } catch {
+        text = offlineStatement(stance, cited, fingerprint.geo);
+      }
     } else {
-      text =
-        stance === 'enthusiast'
-          ? `This lands — ${receipt.entity} (${receipt.domain}) is exactly my scene, and an affinity of ${receipt.affinity.toFixed(2)} says I'm not alone.`
-          : stance === 'skeptical'
-            ? `${receipt.entity} pulls some of my friends in at ${receipt.affinity.toFixed(2)}, but that alone doesn't change my routine.`
-            : `Not for me — my taste runs through ${fingerprint.receipts.slice(0, 2).map((r) => r.entity).join(' and ')}, not this.`;
+      text = offlineStatement(stance, cited, fingerprint.geo);
     }
 
     if (stance !== 'enthusiast') {
       const probe = await adaptiveProbe(qloo, text);
       if (probe) {
-        groundedIn.push({ entity: probe.name, domain: 'places', affinity: probe.affinity });
+        groundedIn.push({ entity: probe.name, domain: 'place', affinity: probe.affinity });
       }
     }
 

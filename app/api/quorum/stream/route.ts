@@ -18,7 +18,7 @@ function sse(event: StreamEvent): string {
 /** LLM plans which Qloo searches represent this concept. Heuristic fallback offline. */
 async function planSearches(concept: string, llm: LLMClient): Promise<{ query: string; filterType: string }[]> {
   const domains = ['urn:entity:artist', 'urn:entity:brand', 'urn:entity:movie'];
-  if (llm.constructor.name !== 'EchoFallback') {
+  if (llm.kind === 'live') {
     try {
       const prompt = [
         'Convert this business concept into 3 Qloo taste-graph searches that capture its audience.',
@@ -147,7 +147,7 @@ export async function POST(req: Request) {
           const panelist = `${names[i % 4]}, ${24 + i * 3} — into ${receipt.entity}`;
 
           let text: string;
-          if (llm.constructor.name !== 'EchoFallback') {
+          if (llm.kind === 'live') {
             const prompt = [
               `You are ${panelist}, part of a focus group in ${fingerprint.geo}.`,
               `Your measured taste fingerprint: ${fingerprint.receipts.map((r) => `${r.entity} (${r.affinity.toFixed(2)})`).join('; ')}.`,

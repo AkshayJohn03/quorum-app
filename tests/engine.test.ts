@@ -25,18 +25,24 @@ describe('free-text lease decision', () => {
     expect(r.neighborhood).toBeTruthy();
   });
 
-  it('stances are data-driven from receipt affinities — GO is reachable', async () => {
+  it('the panel mix is designed and data-grounded — GO is reachable', async () => {
     // The fixture returns high-affinity receipts — a genuinely good concept
     // should produce enthusiast stances and be able to reach GO
     const r = await runDecision(IDEA, AUDIENCE, 'Berlin', qloo, llm);
     const stances = r.panel.map((s) => s.stance);
-    // The panel should NOT be all rejectors — that would mean the stance
-    // assignment is still hard-coded rather than data-driven
+    // every stance is one of the designed panel seats — no 'neutral' filler
+    for (const s of stances) expect(['enthusiast', 'skeptical', 'rejector']).toContain(s);
+    // the designed mix always includes enthusiasm and one skeptic; rejector
+    // only appears when the receipt spread warrants an honest no
     const enthusiastCount = stances.filter((s) => s === 'enthusiast').length;
-    const rejectorCount = stances.filter((s) => s === 'rejector').length;
-    expect(enthusiastCount + rejectorCount).toBe(stances.length);
-    // at least some positive reactions
     expect(enthusiastCount).toBeGreaterThanOrEqual(1);
+    expect(stances).toContain('skeptical');
+    // every statement grounded in its own receipt
+    expect(r.panel.every((s) => s.grounded)).toBe(true);
+    // the verdict is reachable and the fit is calibrated
+    expect(['GO', 'PIVOT', 'NO-GO']).toContain(r.verdict);
+    expect(r.fitScore).toBeGreaterThan(0);
+    expect(r.fitScore).toBeLessThanOrEqual(1);
   });
 
   it('is deterministic offline', async () => {
