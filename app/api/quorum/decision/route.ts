@@ -17,7 +17,7 @@ export async function POST(req: Request) {
     );
   }
 
-  let body: { concept?: string; audience?: string; neighborhood?: string };
+  let body: { concept?: string; audience?: string; neighborhood?: string; debug?: boolean };
   try {
     body = await req.json();
   } catch {
@@ -26,17 +26,31 @@ export async function POST(req: Request) {
   const concept = (body.concept || '').trim();
   const audience = (body.audience || 'locals who match this concept').trim();
   const neighborhood = (body.neighborhood || '').trim();
+  const debug = !!body.debug;
   if (concept.length < 12) return NextResponse.json({ error: 'describe the concept (min 12 chars)' }, { status: 422 });
   if (concept.length > 400) return NextResponse.json({ error: 'concept too long (max 400 chars)' }, { status: 413 });
   if (!neighborhood) return NextResponse.json({ error: 'street / neighborhood is required' }, { status: 422 });
 
+  const qloo = buildQlooClient();
+  const llm = buildLLM();
   try {
-    const report = await runDecision(concept, audience, neighborhood, buildQlooClient(), buildLLM());
-    return NextResponse.json(report);
+    const report = await runDecision(concept, audience, neighborhood, qloo, llm);
+    if (!debug) return NextResponse.json(report);
+    // debug mode: per-call evidence for diagnosis (no secrets in traces)
+    const qlooCalls = qloo.drainTrace();
+    return NextResponse.json({
+      report,
+      diagnostics: {
+        llmMode: llm.kind,
+        qlooCalls,
+        callCount: qlooCalls.length,
+      },
+    });
   } catch (e) {
     const msg = e instanceof Error ? e.message : 'decision failed';
     // don't leak infrastructure details to the client
     const safe = /QLOO_API_KEY|env/i.test(msg) ? 'Qloo API configuration error' : msg;
-    return NextResponse.json({ error: safe }, { status: 500 });
+    const trace = debug ? { qlooCalls: qloo.drainTrace(), llmMode: llm.kind } : undefined;
+    return NextResponse.json({ error: safe, ...(trace ? { diagnostics: trace } : {}) }, { status: 500 });
   }
 }

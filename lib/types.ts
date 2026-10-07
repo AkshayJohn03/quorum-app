@@ -88,6 +88,10 @@ export interface DecisionReport {
   neighborhood: string;
   verdict: 'GO' | 'PIVOT' | 'NO-GO';
   fitScore: number;          // 0..1
+  /** which regime produced fitScore: 'lift' = both scans measured; 'strength' = thin scan fallback */
+  fitRegime: 'lift' | 'strength';
+  /** whether panel dialogue came from a live LLM or the deterministic fallback voice */
+  llmMode: 'live' | 'fallback';
   groundingRate: number;     // 0..1 — % of panel statements with Qloo receipts
   reasons: { text: string; receipts: Receipt[] }[];
   conflicts: { text: string; receipts: Receipt[] }[];

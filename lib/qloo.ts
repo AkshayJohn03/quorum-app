@@ -43,22 +43,58 @@ export type { QlooAffinity, QlooClient, QlooEntityRef };
 
 const DOMAIN_OF = (subtype?: string) => (subtype || '').replace('urn:entity:', '') || 'entity';
 
+/** Per-call evidence: one entry per HTTP call the client makes. */
+export interface QlooCallTrace {
+  call: string; // 'search' | 'insights'
+  summary: string; // query, or filterType + signal count
+  status: number; // HTTP status (200 even when the body carries errors[])
+  results: number; // entities returned (0 on failure)
+  ms: number;
+  error?: string; // thrown message — HTTP failure OR body-level errors[]
+}
+
 export class HttpQloo implements QlooClient {
+  private traces: QlooCallTrace[] = [];
+
   constructor(
     private apiKey: string,
     private baseUrl = process.env.QLOO_BASE_URL || 'https://hackathon.api.qloo.com',
   ) {}
 
-  private async get(path: string, params: Record<string, string>): Promise<unknown> {
+  /** Evidence collected this invocation — read once at the end of a run. */
+  drainTrace(): QlooCallTrace[] {
+    const t = this.traces;
+    this.traces = [];
+    return t;
+  }
+
+  private async get(path: string, params: Record<string, string>, summary: string, call: string): Promise<unknown> {
     const url = new URL(`${this.baseUrl}${path}`);
     Object.entries(params).forEach(([k, v]) => url.searchParams.set(k, v));
-    const res = await fetch(url, { headers: { 'X-Api-Key': this.apiKey } });
-    if (!res.ok) throw new Error(`Qloo ${path} failed: ${res.status}`);
-    return res.json();
+    const started = Date.now();
+    let status = 0;
+    let raw: { errors?: unknown[]; results?: unknown } = {};
+    let error: string | undefined;
+    try {
+      const res = await fetch(url, { headers: { 'X-Api-Key': this.apiKey } });
+      status = res.status;
+      raw = (await res.json()) as typeof raw;
+      if (!res.ok) throw new Error(`Qloo ${path} failed: ${res.status}`);
+      if (raw.errors?.length) throw new Error(String((raw.errors as { message?: string }[])[0]?.message ?? 'body errors[]'));
+      return raw;
+    } catch (e) {
+      error = e instanceof Error ? e.message : String(e);
+      throw e;
+    } finally {
+      const ms = Date.now() - started;
+      const results = Array.isArray(raw.results) ? raw.results.length : (raw as { results?: { entities?: unknown[] } })?.results?.entities?.length ?? 0;
+      this.traces.push({ call, summary, status, results, ms, error });
+      if (error) console.error(`[quorum] ${call} FAILED (${status}, ${ms}ms) ${summary}: ${error}`);
+    }
   }
 
   async searchEntities(query: string): Promise<QlooEntityRef[]> {
-    const raw = (await this.get('/v2/search', { query, take: '4' })) as {
+    const raw = (await this.get('/v2/search', { query, take: '4' }, `query="${query}"`, 'search')) as {
       results?: { entity_id?: string; name?: string; subtype?: string }[];
     };
     return (raw.results ?? [])
@@ -69,11 +105,10 @@ export class HttpQloo implements QlooClient {
   async affinities(signalIds: string[], filterType: string, take = 6): Promise<QlooAffinity[]> {
     const params: Record<string, string> = { 'filter.type': filterType, take: String(take) };
     signalIds.forEach((id, i) => (params[`signal.interests.entities[${i}]`] = id));
-    const raw = (await this.get('/v2/insights', params)) as {
-      errors?: { message: string }[];
+    const summary = `${filterType.replace('urn:entity:', '')} × ${signalIds.length} signals`;
+    const raw = (await this.get('/v2/insights', params, summary, 'insights')) as {
       results?: { entities?: { name?: string; subtype?: string; query?: { affinity?: number } }[] };
     };
-    if (raw.errors?.length) throw new Error(raw.errors[0].message);
     return (raw.results?.entities ?? [])
       .map((r) => ({
         name: r.name ?? '',
@@ -85,7 +120,7 @@ export class HttpQloo implements QlooClient {
 }
 
 /** Runtime factory — requires QLOO_API_KEY (set in .env.local or the host env). */
-export function buildQlooClient(): QlooClient {
+export function buildQlooClient(): HttpQloo {
   const key = process.env.QLOO_API_KEY;
   if (!key) {
     throw new Error('QLOO_API_KEY is not set — add it to .env.local (local) or the host environment (deployed).');

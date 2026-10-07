@@ -417,5 +417,5 @@ export async function runDecision(
   const claims = await decompose(idea, audience, llm);
   const fingerprint = await buildFingerprint(qloo, llm, `${idea} ${audience}`, neighborhood, neighborhood);
   const panel = await runPanel(fingerprint, claims, llm, qloo);
-  return decide(idea, fingerprint, claims, panel);
+  return decide(idea, fingerprint, claims, panel, llm.kind);
 }

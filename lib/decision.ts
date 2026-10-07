@@ -13,6 +13,7 @@ export function decide(
   fingerprint: SegmentFingerprint,
   claims: Claim[],
   panel: PanelStatement[],
+  llmMode: 'live' | 'fallback' = 'fallback',
 ): DecisionReport {
   const receipts = fingerprint.receipts;
   const enthusiasts = panel.filter((s) => s.stance === 'enthusiast');
@@ -97,6 +98,8 @@ export function decide(
     neighborhood: fingerprint.segmentLabel,
     verdict,
     fitScore,
+    fitRegime: liftKnown ? 'lift' : 'strength',
+    llmMode,
     groundingRate: Math.round(groundingRate * 100) / 100,
     reasons,
     conflicts,
