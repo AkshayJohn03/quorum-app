@@ -99,7 +99,7 @@ export default function Page() {
     setTimeout(() => setCopied(false), 2000);
   }
 
-  const vhClass = report?.verdict === 'GO' ? 'vh-go' : report?.verdict === 'PIVOT' ? 'vh-pivot' : 'vh-nogo';
+  const vhClass = report?.verdict === 'GO' ? 'vh-go' : 'vh-nogo';
   const ready = idea.trim().length >= 12;
 
   return (
@@ -257,7 +257,7 @@ export default function Page() {
             <ol>
               <li><strong>Fingerprint.</strong> The street&apos;s audience is measured, not guessed — cross-domain taste correlations from Qloo&apos;s graph of 250M entities.</li>
               <li><strong>Grounded panel.</strong> Synthetic locals react strictly through their fingerprint; every sentence carries its receipt. Skeptics and one rejector are convened on purpose.</li>
-              <li><strong>Verdict with receipts.</strong> GO, PIVOT (with the concept the data prefers) or NO-GO — plus the unserved gap and the real people to interview next.</li>
+              <li><strong>Verdict with receipts.</strong> GO or NO-GO — the strongest measured signal to lean toward, the unserved gap, and the real people to interview next.</li>
             </ol>
             <p className="honest">Quorum produces grounded hypotheses. It cannot predict the future, and it will always name the real humans you should talk to before signing a lease.</p>
           </section>

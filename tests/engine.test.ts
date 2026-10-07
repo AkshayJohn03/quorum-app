@@ -18,7 +18,7 @@ describe('free-text lease decision', () => {
     const r = await runDecision(IDEA, AUDIENCE, 'Berlin', qloo, llm);
     expect(r.panel.length).toBeGreaterThanOrEqual(4);
     expect(r.panel.every((s) => s.groundedIn.length >= 1)).toBe(true);
-    expect(['GO', 'PIVOT', 'NO-GO']).toContain(r.verdict);
+    expect(['GO', 'NO-GO']).toContain(r.verdict);
     expect(r.groundingRate).toBeGreaterThan(0);
     expect(r.nextInterviews.length).toBe(2);
     expect(r.concept).toBeTruthy();
@@ -40,7 +40,7 @@ describe('free-text lease decision', () => {
     // every statement grounded in its own receipt
     expect(r.panel.every((s) => s.grounded)).toBe(true);
     // the verdict is reachable and the fit is calibrated
-    expect(['GO', 'PIVOT', 'NO-GO']).toContain(r.verdict);
+    expect(['GO', 'NO-GO']).toContain(r.verdict);
     expect(r.fitScore).toBeGreaterThan(0);
     expect(r.fitScore).toBeLessThanOrEqual(1);
   });
@@ -80,7 +80,7 @@ describe('free-text lease decision', () => {
       qloo,
       llm,
     );
-    expect(['GO', 'PIVOT', 'NO-GO']).toContain(r.verdict);
+    expect(['GO', 'NO-GO']).toContain(r.verdict);
     expect(r.panel.length).toBeGreaterThanOrEqual(4);
   });
 });

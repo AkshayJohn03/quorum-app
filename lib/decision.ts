@@ -4,7 +4,7 @@
  * The receipts are already concept-derived (the agent planned the Qloo
  * searches from the user's words), so the decision reads the STRENGTH of the
  * intersection: high affinity + panel enthusiasm = GO; weak intersection =
- * PIVOT toward whatever the data prefers; direct clashes + rejection = NO-GO.
+ * NO-GO when the data is weak, thin, or hard-rejects (two-rung ladder per live audit).
  */
 import type { Claim, DecisionReport, PanelStatement, Receipt, SegmentFingerprint } from './types';
 
@@ -47,21 +47,18 @@ export function decide(
     ? Math.round(clamp(0.65 + liftPts * 0.14 + (intersectionMean - 0.85) * 0.8) * 100) / 100
     : Math.round(clamp(intersectionMean) * 100) / 100;
 
-  // verdict ladder, fit-band driven so every rung is reachable when the data
-  // says so: strong fit + enthusiastic grounded panel = GO; middling fit =
-  // PIVOT (the street doesn't help enough); low fit, dilution or a hard no =
-  // NO-GO. In the strength regime the old measured-strength bands apply.
+  // verdict ladder — two rungs, both honestly reachable (26-run live audit:
+  // Qloo's top-N intersection affinities are structurally positive-biased, so
+  // a PIVOT band never fires and was dropped per review). GO requires full
+  // differential data, healthy fit, and a grounded enthusiastic panel.
+  // Everything else is NO-GO: a hard no, weak intersection, or evidence too
+  // thin to measure — Quorum does not bless a pairing it couldn't measure.
+  // The strongest-domain suggestion still ships on every NO-GO (see `pivot`).
   let verdict: DecisionReport['verdict'];
-  if (hardNo) {
+  if (!liftKnown) {
     verdict = 'NO-GO';
-  } else if (!liftKnown) {
-    verdict = intersectionMean < 0.35
-      ? 'NO-GO'
-      : enthusiasts.length >= 2 && intersectionMean >= 0.55 ? 'GO' : 'PIVOT';
   } else {
-    verdict = fitScore < 0.45
-      ? 'NO-GO'
-      : fitScore >= 0.62 && enthusiasts.length >= 2 ? 'GO' : 'PIVOT';
+    verdict = !hardNo && fitScore >= 0.62 && enthusiasts.length >= 2 ? 'GO' : 'NO-GO';
   }
 
   const liftPct = Math.round(lift * 1000) / 10;

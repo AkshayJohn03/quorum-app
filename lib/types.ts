@@ -86,7 +86,10 @@ export interface DecisionReport {
   idea: string;
   concept: string;
   neighborhood: string;
-  verdict: 'GO' | 'PIVOT' | 'NO-GO';
+  /** GO = measured, undiluted fit with a grounded enthusiastic panel. NO-GO = everything else:
+   * weak intersection, thin/unmeasurable evidence, or a hard panel no. Two rungs — the
+   * 26-run live audit proved Qloo's top-N affinities can't support a middle rung honestly. */
+  verdict: 'GO' | 'NO-GO';
   fitScore: number;          // 0..1
   /** which regime produced fitScore: 'lift' = both scans measured; 'strength' = thin scan fallback */
   fitRegime: 'lift' | 'strength';
