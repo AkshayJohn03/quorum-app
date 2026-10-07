@@ -188,7 +188,10 @@ export default function Page() {
             </section>
           )}
 
-          {step === 2 && report && (
+          </>
+          )}
+
+          {phase === 'report' && report && (
             <section aria-label="Verdict dashboard">
               <div className="dash">
                 <div className="dash-head">
@@ -240,8 +243,6 @@ export default function Page() {
                 </div>
               </div>
             </section>
-          )}
-          </>
           )}
 
           {phase === 'convening' && (

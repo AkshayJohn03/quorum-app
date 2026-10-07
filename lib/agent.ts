@@ -147,6 +147,11 @@ export async function buildFingerprint(
 
   const finalReceipts = [...byName.values()].sort((a, b) => b.affinity - a.affinity).slice(0, 16);
 
+  // If the real affinity scan is thin, the fallback fills receipts from search
+  // results (popularity proxies) — at that point the receipts no longer measure
+  // the concept×street differential, so street-lift stats must be suppressed.
+  const scanThin = finalReceipts.length < 2;
+
   // multi-level fallback: if the affinity scan is thin, use the search results
   // themselves as receipts (popularity as a proxy for cultural relevance).
   // This guarantees the demo never fails — the fingerprint always has data.
@@ -196,6 +201,11 @@ export async function buildFingerprint(
   const mean = (xs: number[]) => (xs.length ? xs.reduce((s, x) => s + x, 0) / xs.length : 0);
   const intersectionMean = mean(finalOutput.map((r) => r.affinity));
   const conceptOnlyMean = conceptOnlyAffs.length ? mean(conceptOnlyAffs) : intersectionMean;
+  // stats are only meaningful when BOTH scans produced real affinity data —
+  // otherwise lift degenerates to exactly 0 and would pin fitScore at 0.5
+  const stats = !scanThin && conceptOnlyAffs.length > 0
+    ? { intersectionMean, conceptOnlyMean, lift: intersectionMean - conceptOnlyMean }
+    : undefined;
 
   // never throw — return whatever receipts exist, even 1; the UI handles the
   // thin case gracefully and the report is still useful with partial data
@@ -204,11 +214,7 @@ export async function buildFingerprint(
     geo: neighborhood,
     receipts: finalOutput,
     chains: [],
-    stats: {
-      intersectionMean,
-      conceptOnlyMean,
-      lift: intersectionMean - conceptOnlyMean,
-    },
+    stats,
   };
 }
 

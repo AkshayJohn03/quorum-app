@@ -25,34 +25,42 @@ export function decide(
   // surfaced in conflicts, but doesn't block a genuinely hot intersection.
   const hardNo = rejectors.some((s) => (s.groundedIn[0]?.affinity ?? 1) < 0.55);
 
-  // FIT = STREET LIFT, not raw affinity. Qloo's top returned affinities are
-  // ceiling-capped for any intersection, so the discriminating question is:
-  // does adding this street AMPLIFY the concept's own measured audience?
-  // lift > 0 → the street pulls the concept's people in; lift < 0 → dilutes.
+  // FIT has two regimes. When both scans returned real affinity data, fit is
+  // STREET LIFT: does adding this street amplify the concept's own audience?
+  // When the scan was thin (fallback receipts, no differential measurable),
+  // fit reads the measured intersection strength directly — and says so.
   const stats = fingerprint.stats;
+  const liftKnown = !!stats;
   const intersectionMean = stats?.intersectionMean
     ?? (receipts.length ? receipts.reduce((a, r) => a + r.affinity, 0) / receipts.length : 0);
   const conceptOnlyMean = stats?.conceptOnlyMean ?? intersectionMean;
   const lift = intersectionMean - conceptOnlyMean;
-  // calibrate: 0 lift → 50; +0.1 lift (a real amplification) → 80; −0.1 → 20
-  const fitScore = Math.round(Math.min(0.98, Math.max(0.05, 0.5 + lift * 3)) * 100) / 100;
+  const clamp = (x: number) => Math.min(0.98, Math.max(0.05, x));
+  const fitScore = liftKnown
+    // 0.7 base = "street is compatible"; amplification pushes up, dilution down
+    ? Math.round(clamp(0.7 + lift * 4 + (intersectionMean - 0.8) * 0.5) * 100) / 100
+    : Math.round(clamp(intersectionMean) * 100) / 100;
 
-  // verdict ladder — the street must measurably help the concept
+  // verdict ladder — the street must never HURT the concept, and must help it
+  // be heard: strong intersection + enthusiastic grounded panel = GO.
+  // PIVOT = marginal or mildly diluting; NO-GO = dilution, weakness, hard no.
   let verdict: DecisionReport['verdict'];
-  if (hardNo || intersectionMean < 0.35 || lift < -0.03) {
+  if (hardNo || intersectionMean < 0.35 || (liftKnown && lift <= -0.03)) {
     verdict = 'NO-GO';
-  } else if (lift > 0.02 && enthusiasts.length >= 2) {
+  } else if (enthusiasts.length >= 2 && intersectionMean >= 0.55 && (!liftKnown || lift > -0.01)) {
     verdict = 'GO';
   } else {
     verdict = 'PIVOT';
   }
 
   const liftPct = Math.round(lift * 1000) / 10;
-  const liftText = lift > 0.005
-    ? `Street lift +${liftPct} pts: adding ${fingerprint.geo} to the concept's audience RAISES measured affinity (${(conceptOnlyMean * 100).toFixed(0)} → ${(intersectionMean * 100).toFixed(0)}) — this street amplifies the concept.`
-    : lift < -0.005
-      ? `Street lift ${liftPct} pts: adding ${fingerprint.geo} DILUTES the concept's audience (${(conceptOnlyMean * 100).toFixed(0)} → ${(intersectionMean * 100).toFixed(0)}) — the intersection is weaker than the concept alone.`
-      : `Street lift ≈ 0: ${fingerprint.geo} neither amplifies nor dilutes this concept's audience — the concept would perform the same anywhere.`;
+  const liftReason = !liftKnown
+    ? { text: `Street lift not measurable for this pairing — the differential scan was too thin, so the verdict reads the measured intersection strength directly (mean affinity ${(intersectionMean * 100).toFixed(0)}/100).`, receipts: [] as Receipt[] }
+    : lift > 0.005
+      ? { text: `Street lift +${liftPct} pts: adding ${fingerprint.geo} to the concept's audience RAISES measured affinity (${(conceptOnlyMean * 100).toFixed(0)} → ${(intersectionMean * 100).toFixed(0)}) — this street amplifies the concept.`, receipts: [] as Receipt[] }
+      : lift < -0.005
+        ? { text: `Street lift ${liftPct} pts: adding ${fingerprint.geo} DILUTES the concept's audience (${(conceptOnlyMean * 100).toFixed(0)} → ${(intersectionMean * 100).toFixed(0)}) — the intersection is weaker than the concept alone.`, receipts: [] as Receipt[] }
+        : { text: `Street lift ≈ 0: ${fingerprint.geo} neither amplifies nor dilutes this concept's audience — the street is compatible with the concept.`, receipts: [] as Receipt[] };
 
   // pivot: the strongest receipt domain becomes the recommended direction
   const strongest = receipts[0];
@@ -68,7 +76,7 @@ export function decide(
         : null;
 
   const reasons = [
-    { text: liftText, receipts: [] as Receipt[] },
+    liftReason,
     ...receipts.slice(0, 2).map((r) => ({
       text: `Measured resonance: this audience over-indexes on ${r.entity} (${r.domain}, affinity ${r.affinity.toFixed(2)})${r.note ? ` — found via "${r.note}"` : ''}.`,
       receipts: [r],

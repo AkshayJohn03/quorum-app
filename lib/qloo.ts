@@ -84,16 +84,12 @@ export class HttpQloo implements QlooClient {
   }
 }
 
-/**
- * Hackathon-scoped key — works only against hackathon.api.qloo.com and
- * expires after the event. The repo is private; rotate after the hackathon.
- * For production, set QLOO_API_KEY env var with a full-scope key instead.
- */
-const HACKATHON_KEY = 'hack_bd0ff7c7baf2b3cdebc0ca6573e01826309ffa83';
-
-/** Runtime factory — env key first, hackathon fallback second. */
+/** Runtime factory — requires QLOO_API_KEY (set in .env.local or the host env). */
 export function buildQlooClient(): QlooClient {
-  const key = process.env.QLOO_API_KEY || HACKATHON_KEY;
+  const key = process.env.QLOO_API_KEY;
+  if (!key) {
+    throw new Error('QLOO_API_KEY is not set — add it to .env.local (local) or the host environment (deployed).');
+  }
   return new HttpQloo(key, process.env.QLOO_BASE_URL || 'https://hackathon.api.qloo.com');
 }
 
