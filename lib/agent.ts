@@ -87,14 +87,17 @@ export async function buildFingerprint(
   for (const plan of planned) {
     try {
       const entities = await qloo.searchEntities(plan.query);
-      entities.forEach((e) => conceptSignalIds.push(e.id));
+      entities.slice(0, 2).forEach((e) => conceptSignalIds.push(e.id));
     } catch {
       // additive
     }
   }
-  // also add individual concept words as broader signal coverage
-  const conceptWords = concept.toLowerCase().replace(/[^a-z0-9\s]/g, '').split(/\s+/).filter((w) => w.length >= 3);
+  // also add individual concept words as broader signal coverage — but only
+  // words the planned searches don't already cover (each search costs a
+  // rate-limited slot; the live trace showed redundant word searches 429ing)
+  const conceptWords = concept.toLowerCase().replace(/[^a-z0-9\s]/g, '').split(/\s+/).filter((w) => w.length >= 4);
   for (const w of conceptWords.slice(0, 3)) {
+    if (planned.some((p) => p.query.toLowerCase().includes(w))) continue;
     try {
       const entities = await qloo.searchEntities(w);
       entities.slice(0, 1).forEach((e) => conceptSignalIds.push(e.id));
@@ -186,13 +189,19 @@ export async function buildFingerprint(
   // STREET LIFT — the honest fit metric. Qloo's top returned affinities are
   // ceiling-capped (~0.9 for any intersection), so absolute strength can't
   // discriminate. What can: does ADDING the street amplify the concept's own
-  // audience? Same 10 domains, concept signals only, no street — then compare.
-  const conceptOnlyResults = await Promise.allSettled(
-    QLOO_DOMAINS.map((domain) =>
-      qloo.affinities(conceptSignalIds, `urn:entity:${domain}`, 4)
-        .then((affs) => ({ domain, affs })),
-    ),
+  // audience? Same scan, concept signals only, no street — restricted to the
+  // domains that actually produced receipts (each call costs a rate-limited slot).
+  const liftDomains = [...new Set(finalOutput.map((r) => r.domain))].filter((d) =>
+    (QLOO_DOMAINS as readonly string[]).includes(d),
   );
+  const conceptOnlyResults = liftDomains.length
+    ? await Promise.allSettled(
+        liftDomains.map((domain) =>
+          qloo.affinities(conceptSignalIds, `urn:entity:${domain}`, 4)
+            .then((affs) => ({ domain, affs })),
+        ),
+      )
+    : [];
   const conceptOnlyAffs: number[] = [];
   for (const result of conceptOnlyResults) {
     if (result.status !== 'fulfilled') continue;

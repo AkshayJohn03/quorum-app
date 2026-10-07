@@ -51,10 +51,17 @@ export interface QlooCallTrace {
   results: number; // entities returned (0 on failure)
   ms: number;
   error?: string; // thrown message — HTTP failure OR body-level errors[]
+  retries?: number; // 429 retry count when > 0
 }
 
 export class HttpQloo implements QlooClient {
   private traces: QlooCallTrace[] = [];
+  // CONFIRMED CAUSE (live trace, 2026-10-07): parallel bursts trip Qloo's
+  // per-key 429 rate limit within ~2s — 27/32 calls failed and
+  // Promise.allSettled swallowed them. Every call therefore takes a numbered
+  // slot with a minimum gap, and 429s retry honoring Retry-After.
+  private nextSlotAt = 0;
+  private static readonly MIN_GAP_MS = 320;
 
   constructor(
     private apiKey: string,
@@ -75,21 +82,36 @@ export class HttpQloo implements QlooClient {
     let status = 0;
     let raw: { errors?: unknown[]; results?: unknown } = {};
     let error: string | undefined;
+    let retries = 0;
     try {
-      const res = await fetch(url, { headers: { 'X-Api-Key': this.apiKey } });
-      status = res.status;
-      raw = (await res.json()) as typeof raw;
-      if (!res.ok) throw new Error(`Qloo ${path} failed: ${res.status}`);
-      if (raw.errors?.length) throw new Error(String((raw.errors as { message?: string }[])[0]?.message ?? 'body errors[]'));
-      return raw;
+      for (;;) {
+        // take a spaced slot before every attempt (parallel callers serialize here)
+        const now = Date.now();
+        if (now < this.nextSlotAt) await new Promise((r) => setTimeout(r, this.nextSlotAt - now));
+        this.nextSlotAt = Date.now() + HttpQloo.MIN_GAP_MS;
+
+        const res = await fetch(url, { headers: { 'X-Api-Key': this.apiKey } });
+        status = res.status;
+        if (res.status === 429 && retries < 2) {
+          retries++;
+          const ra = Number(res.headers.get('retry-after'));
+          const waitMs = Number.isFinite(ra) && ra > 0 ? Math.min(ra * 1000, 8000) : 1200 * retries;
+          await new Promise((r) => setTimeout(r, waitMs));
+          continue;
+        }
+        raw = (await res.json()) as typeof raw;
+        if (!res.ok) throw new Error(`Qloo ${path} failed: ${res.status}`);
+        if (raw.errors?.length) throw new Error(String((raw.errors as { message?: string }[])[0]?.message ?? 'body errors[]'));
+        return raw;
+      }
     } catch (e) {
       error = e instanceof Error ? e.message : String(e);
       throw e;
     } finally {
       const ms = Date.now() - started;
       const results = Array.isArray(raw.results) ? raw.results.length : (raw as { results?: { entities?: unknown[] } })?.results?.entities?.length ?? 0;
-      this.traces.push({ call, summary, status, results, ms, error });
-      if (error) console.error(`[quorum] ${call} FAILED (${status}, ${ms}ms) ${summary}: ${error}`);
+      this.traces.push({ call, summary, status, results, ms, error, retries: retries || undefined });
+      if (error) console.error(`[quorum] ${call} FAILED (${status}, ${ms}ms, ${retries} retries) ${summary}: ${error}`);
     }
   }
 
