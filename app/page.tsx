@@ -26,6 +26,8 @@ export default function Page() {
   const [error, setError] = useState<string | null>(null);
   const [conveningLine, setConveningLine] = useState(0);
   const [copied, setCopied] = useState(false);
+  const [suggestions, setSuggestions] = useState<{ id: string; name: string; domain: string }[]>([]);
+  const [activeIdx, setActiveIdx] = useState(-1);
   const taRef = useRef<HTMLTextAreaElement>(null);
 
   useEffect(() => {
@@ -33,6 +35,21 @@ export default function Page() {
     const t = setInterval(() => setConveningLine((n) => (n + 1) % CONVENING_LINES.length), 850);
     return () => clearInterval(t);
   }, [phase]);
+
+  useEffect(() => {
+    const q = neighborhood.trim();
+    if (q.length < 2) { setSuggestions([]); setActiveIdx(-1); return; }
+    const ctrl = new AbortController();
+    const t = setTimeout(async () => {
+      try {
+        const res = await fetch(`/api/quorum/places?q=${encodeURIComponent(q)}`, { signal: ctrl.signal });
+        const json = await res.json();
+        setSuggestions(Array.isArray(json.results) ? json.results : []);
+        setActiveIdx(-1);
+      } catch { /* aborted or transient */ }
+    }, 250);
+    return () => { clearTimeout(t); ctrl.abort(); };
+  }, [neighborhood]);
 
   useEffect(() => {
     const el = taRef.current;
@@ -136,8 +153,30 @@ export default function Page() {
               <h2 className="step-head">Second — the street you&apos;re signing for</h2>
               <input className="street-input" value={neighborhood}
                 onChange={(e) => setNeighborhood(e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key === 'ArrowDown' && suggestions.length) { e.preventDefault(); setActiveIdx((i) => Math.min(i + 1, suggestions.length - 1)); }
+                  else if (e.key === 'ArrowUp' && suggestions.length) { e.preventDefault(); setActiveIdx((i) => Math.max(i - 1, 0)); }
+                  else if (e.key === 'Enter') {
+                    if (activeIdx >= 0 && suggestions[activeIdx]) { e.preventDefault(); setNeighborhood(suggestions[activeIdx].name); setSuggestions([]); setActiveIdx(-1); }
+                  }
+                  else if (e.key === 'Escape') { setSuggestions([]); setActiveIdx(-1); }
+                }}
                 placeholder="Berlin, East Austin, Shoreditch — any street Qloo knows"
-                aria-label="street" maxLength={200} />
+                aria-label="street" maxLength={200} autoComplete="off" />
+              {suggestions.length > 0 && (
+                <div className="street-results" role="listbox" aria-label="Street suggestions">
+                  {suggestions.map((s, i) => (
+                    <button type="button" role="option" aria-selected={i === activeIdx}
+                      className={`street-result ${i === activeIdx ? 'street-result-active' : ''}`}
+                      key={`${s.id}-${i}`}
+                      onMouseEnter={() => setActiveIdx(i)}
+                      onClick={() => { setNeighborhood(s.name); setSuggestions([]); setActiveIdx(-1); }}>
+                      <span>{s.name}</span>
+                      <span className="street-domain">{s.domain}</span>
+                    </button>
+                  ))}
+                </div>
+              )}
               <p className="street-hint">The street is used as a Qloo signal — results are the intersection of your concept&apos;s audience and this location.</p>
               {neighborhood.trim().length >= 2 && (
                 <div className="convene-bar">
