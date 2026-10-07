@@ -12,7 +12,10 @@
  * All 10 Qloo entity domains are supported for insights filtering.
  */
 
-/** The 10 Qloo entity domains — used to scan the full taste graph. */
+/** The Qloo entity domains scanned for insights — used to sweep the taste graph.
+ * video_game is excluded: the hackathon insights endpoint rejects
+ * urn:entity:video_game as a filter.type with HTTP 400, deterministically
+ * (18/18 live runs, identical signal sets succeed for all sibling domains). */
 export const QLOO_DOMAINS = [
   'brand',
   'place',
@@ -22,7 +25,6 @@ export const QLOO_DOMAINS = [
   'podcast',
   'book',
   'destination',
-  'video_game',
   'person',
 ] as const;
 

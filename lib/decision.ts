@@ -30,28 +30,38 @@ export function decide(
   // STREET LIFT: does adding this street amplify the concept's own audience?
   // When the scan was thin (fallback receipts, no differential measurable),
   // fit reads the measured intersection strength directly — and says so.
+  //
+  // Lift-regime scale is calibrated from the 18-run live audit (2026-10-07):
+  // measured lift spans about -1.2 to +2.3 affinity points, so the score is
+  // 0.65 (street compatible) + lift in points × 0.14 + a small strength bonus.
+  // Amplification of +2.3pts lands ~0.98; dilution of -1.5pts lands ~0.44.
   const stats = fingerprint.stats;
   const liftKnown = !!stats;
   const intersectionMean = stats?.intersectionMean
     ?? (receipts.length ? receipts.reduce((a, r) => a + r.affinity, 0) / receipts.length : 0);
   const conceptOnlyMean = stats?.conceptOnlyMean ?? intersectionMean;
   const lift = intersectionMean - conceptOnlyMean;
+  const liftPts = lift * 100; // lift expressed in affinity points
   const clamp = (x: number) => Math.min(0.98, Math.max(0.05, x));
   const fitScore = liftKnown
-    // 0.7 base = "street is compatible"; amplification pushes up, dilution down
-    ? Math.round(clamp(0.7 + lift * 4 + (intersectionMean - 0.8) * 0.5) * 100) / 100
+    ? Math.round(clamp(0.65 + liftPts * 0.14 + (intersectionMean - 0.85) * 0.8) * 100) / 100
     : Math.round(clamp(intersectionMean) * 100) / 100;
 
-  // verdict ladder — the street must never HURT the concept, and must help it
-  // be heard: strong intersection + enthusiastic grounded panel = GO.
-  // PIVOT = marginal or mildly diluting; NO-GO = dilution, weakness, hard no.
+  // verdict ladder, fit-band driven so every rung is reachable when the data
+  // says so: strong fit + enthusiastic grounded panel = GO; middling fit =
+  // PIVOT (the street doesn't help enough); low fit, dilution or a hard no =
+  // NO-GO. In the strength regime the old measured-strength bands apply.
   let verdict: DecisionReport['verdict'];
-  if (hardNo || intersectionMean < 0.35 || (liftKnown && lift <= -0.03)) {
+  if (hardNo) {
     verdict = 'NO-GO';
-  } else if (enthusiasts.length >= 2 && intersectionMean >= 0.55 && (!liftKnown || lift > -0.01)) {
-    verdict = 'GO';
+  } else if (!liftKnown) {
+    verdict = intersectionMean < 0.35
+      ? 'NO-GO'
+      : enthusiasts.length >= 2 && intersectionMean >= 0.55 ? 'GO' : 'PIVOT';
   } else {
-    verdict = 'PIVOT';
+    verdict = fitScore < 0.45
+      ? 'NO-GO'
+      : fitScore >= 0.62 && enthusiasts.length >= 2 ? 'GO' : 'PIVOT';
   }
 
   const liftPct = Math.round(lift * 1000) / 10;
